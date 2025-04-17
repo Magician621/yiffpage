@@ -1,23 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Find Furries - yiffpage.net</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      overflow: hidden;
-    }
-
-    #map {
-      height: 100%;
-      width: 100%;
-      z-index: 1;
-    }
-
+    html, body { margin: 0; height: 100%; }
+    #map { height: 100%; width: 100%; z-index: 1; }
     #overlay {
       position: absolute;
       z-index: 999;
@@ -33,18 +23,16 @@
       text-align: center;
       padding: 2em;
     }
-
     #overlay button {
       padding: 0.8em 1.5em;
       margin-top: 1em;
       font-size: 1em;
       border: none;
       border-radius: 8px;
-      background: #ffffff;
+      background: #fff;
       color: #222;
       cursor: pointer;
     }
-
     #header {
       position: absolute;
       top: 0;
@@ -57,49 +45,128 @@
       font-family: 'Segoe UI', sans-serif;
       box-shadow: 0 0 8px rgba(0,0,0,0.2);
     }
+    #chatbox {
+      position: absolute;
+      top: 3.5em;
+      width: 100%;
+      z-index: 998;
+      display: flex;
+      justify-content: center;
+    }
+    #chatbox input {
+      width: 60%;
+      padding: 0.5em;
+      font-size: 1em;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
+    .chat-bubble {
+      background: rgba(255,255,255,0.85);
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 0.9em;
+      margin-top: -30px;
+    }
   </style>
 </head>
 <body>
   <div id="header">find furries in yiffpage.net</div>
+  <div id="chatbox">
+    <input type="text" id="chatInput" placeholder="say hi to nearby furries 🐾"/>
+  </div>
   <div id="overlay">
     <h1>Welcome to yiffpage.net</h1>
-    <p>This site uses your exact location to help you find other furries near you.<br><br>
-       Your location will be marked on the public map. Do you wish to continue?</p>
+    <p>This site uses your exact location to show you and other furries on the map.<br><br>
+       Your location and messages will be visible to others in real time.</p>
     <button onclick="startApp()">Yes, show me the map</button>
   </div>
   <div id="map"></div>
 
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+  <!-- Leaflet -->
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
   <script>
+    // 🔧 Replace with your Firebase config:
+    const firebaseConfig = {
+  apiKey: "AIzaSyA6z904J-oOSAXXk8Ntwase-z9SULxM4Mw",
+  authDomain: "yiffpage.firebaseapp.com",
+  projectId: "yiffpage",
+  storageBucket: "yiffpage.firebasestorage.app",
+  messagingSenderId: "38699749501",
+  appId: "1:38699749501:web:8d5ecfe96437fb460e6114",
+  measurementId: "G-GM2L96V411"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let userId = 'user_' + Math.random().toString(36).substring(2, 10);
+    let userMarker = null;
+    const markers = {};
+
     function startApp() {
       document.getElementById('overlay').style.display = 'none';
 
       if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(showMap, showError);
+        navigator.geolocation.getCurrentPosition(position => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+          initMap(lat, lon);
+          saveLocation(lat, lon, "");
+        }, err => {
+          alert("Error: " + err.message);
+        });
       } else {
-        alert("Geolocation is not supported by this browser.");
+        alert("Geolocation not supported");
       }
     }
 
-    function showMap(position) {
-      const lat = position.coords.latitude;
-      const lon = position.coords.longitude;
-
+    function initMap(lat, lon) {
       const map = L.map('map').setView([lat, lon], 13);
-
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
         attribution: '&copy; OpenStreetMap contributors'
       }).addTo(map);
 
-      // Add the user's marker
-      L.marker([lat, lon]).addTo(map)
-        .bindPopup("You are here 🐾")
-        .openPopup();
+      userMarker = L.marker([lat, lon]).addTo(map);
+
+      document.getElementById('chatInput').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+          const msg = e.target.value.trim();
+          if (msg.length > 0) {
+            saveLocation(lat, lon, msg);
+            e.target.value = "";
+          }
+        }
+      });
+
+      // Realtime updates
+      db.ref("locations").on("value", snapshot => {
+        const data = snapshot.val();
+        for (const id in data) {
+          const { lat, lon, msg } = data[id];
+          if (!markers[id]) {
+            markers[id] = L.marker([lat, lon]).addTo(map);
+          } else {
+            markers[id].setLatLng([lat, lon]);
+          }
+
+          if (msg) {
+            const bubble = `<div class="chat-bubble">${msg}</div>`;
+            markers[id].bindPopup(bubble).openPopup();
+          }
+        }
+      });
     }
 
-    function showError(error) {
-      alert("Error retrieving location: " + error.message);
+    function saveLocation(lat, lon, msg) {
+      db.ref("locations/" + userId).set({
+        lat: lat,
+        lon: lon,
+        msg: msg
+      });
     }
   </script>
 </body>
